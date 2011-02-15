@@ -4,6 +4,7 @@ package org.papamitra.pasori
 import com.sun.jna._
 import java.nio.IntBuffer
 import java.nio.ByteBuffer
+import java.util.GregorianCalendar
 
 object Libpafe {
   private val libpafe = NativeLibrary.getInstance("/usr/lib64/libpafe.so")
@@ -18,7 +19,7 @@ object Libpafe {
   private val libc = NativeLibrary.getInstance("c")
   lazy val free = libc.getFunction("free")
 
-  def toArgs(args:Any*) = args.map(_.asInstanceOf[AnyRef]).toArray
+  def toArgs(args: Any*) = args.map(_.asInstanceOf[AnyRef]).toArray
 }
 
 class Pasori {
@@ -44,11 +45,11 @@ class Pasori {
     (ret, v1, v2)
   }
 
-  def felicaPolling(polType: Int):Option[Felica] = {
+  def felicaPolling(polType: Int): Option[Felica] = {
     def loop(cnt: Int): Option[Pointer] = {
       if (cnt == 0) return None
       val pt = polType.asInstanceOf[Short]
-      felica_polling.invokePointer(toArgs(pasori,pt,0,0)) match{
+      felica_polling.invokePointer(toArgs(pasori, pt, 0, 0)) match {
         case Pointer.NULL => loop(cnt - 1)
         case p => Some(p)
       }
@@ -57,18 +58,35 @@ class Pasori {
   }
 }
 
-class Felica(felica:tag_felica) {
+class Felica(felica: tag_felica) {
   import Libpafe._
 
-  def readBlock(serviceCode:Int, blockNo:Int) = {
+  def readBlock(serviceCode: Int, blockNo: Int) = {
     val data = ByteBuffer.allocate(16)
-    val ret = felica_read_single.invokeInt(toArgs(felica,serviceCode,0,blockNo,data))
+    val ret = felica_read_single.invokeInt(toArgs(felica, serviceCode, 0, blockNo, data))
     (ret, data)
   }
 
-  def close{
+  def close {
     free.invokeInt(Array(felica.getPointer))
   }
+}
+
+class SuicaHistory(data: ByteBuffer) {
+
+  val term = data.get(0)
+  val proc = data.get(1)
+  val date = parseDate(data.getShort(4))
+  val inLine = data.get(6)
+  val inStation = data.get(7)
+  val outLine = data.get(8)
+  val outStation = data.get(9)
+  val region = data.get(15)
+
+  def parseDate(date:Short) = 
+    new GregorianCalendar( 2000 + (date >> 9),     /*year*/
+			  ((date >> 5) & 0xf) - 1, /*month(0 origin)*/
+			  date & 0x1f)             /*day*/
 }
 
 object Main {
@@ -83,16 +101,15 @@ object Main {
     using(new Pasori) { pasori =>
       val (ret, v1, v2) = pasori.version
       println(v1.get, v2.get)
-//      pasori.felicaPolling(LibpafeLibrary.FELICA_POLLING_ANY) match{
-      pasori.felicaPolling(0xffff) match{
-	case None => throw new Exception("felica polling");
-	case Some(felica) =>
-	  using(felica){ f=>
-			val (ret, data) = f.readBlock(
-			  LibpafeLibrary.FELICA_SERVICE_SUICA_HISTORY,0)
-	print(data)
-	()
-		      }
+      pasori.felicaPolling(LibpafeLibrary.FELICA_POLLING_ANY) match {
+        case None => throw new Exception("felica polling");
+        case Some(felica) =>
+          using(felica) { f =>
+            val (ret, data) = f.readBlock(
+              LibpafeLibrary.FELICA_SERVICE_SUICA_HISTORY, 0)
+            print(new SuicaHistory(data))
+            ()
+          }
       }
     }
   }
